@@ -1,15 +1,16 @@
 // Package goversion uses go modules' method of versioning for the purpose of tracking a current project's version.
-// See cmd/go/internal/dirhash/hash.go
 package goversion
 
 import (
 	"archive/zip"
+	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -67,4 +68,50 @@ func HashZip(zipfile string, hash Hash) (string, error) {
 		return f.Open()
 	}
 	return hash(files, zipOpen)
+}
+
+var (
+	slashSlash = []byte("//")
+	moduleStr  = []byte("module")
+)
+
+// ModulePath returns the module path from the gomod file text.
+// Must be given mod file contents.
+// Taken from https://github.com/golang/go/blob/master/src/cmd/go/internal/modfile/read.go
+// See https://github.com/golang/go/blob/master/src/cmd/go/internal/modfetch/codehost/git.go#L466
+// For function Go uses to read mod.go file.
+// If it cannot find a module path, it returns an empty string.
+// It is tolerant of unrelated problems in the go.mod file.
+func ModulePath(mod []byte) string {
+	for len(mod) > 0 {
+		line := mod
+		mod = nil
+		if i := bytes.IndexByte(line, '\n'); i >= 0 {
+			line, mod = line[:i], line[i+1:]
+		}
+		if i := bytes.Index(line, slashSlash); i >= 0 {
+			line = line[:i]
+		}
+		line = bytes.TrimSpace(line)
+		if !bytes.HasPrefix(line, moduleStr) {
+			continue
+		}
+		line = line[len(moduleStr):]
+		n := len(line)
+		line = bytes.TrimSpace(line)
+		if len(line) == n || len(line) == 0 {
+			continue
+		}
+
+		if line[0] == '"' || line[0] == '`' {
+			p, err := strconv.Unquote(string(line))
+			if err != nil {
+				return "" // malformed quoted string or multiline module path
+			}
+			return p
+		}
+
+		return string(line)
+	}
+	return "" // missing module path
 }
